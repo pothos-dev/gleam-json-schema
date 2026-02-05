@@ -2,6 +2,7 @@ import gleam/dynamic/decode
 import gleam/json
 import gleam/list
 import gleam/option.{type Option}
+import gleam/string
 
 // --- Internal types ---
 
@@ -14,6 +15,8 @@ type SchemaNode {
   NullableNode(inner: SchemaNode)
   ObjectNode(fields: List(ObjectField))
   DescriptionNode(inner: SchemaNode, description: String)
+  EnumNode(values: List(String))
+  ConstNode(value: String)
 }
 
 type ObjectField {
@@ -64,6 +67,53 @@ pub fn nullable(inner: JsonSchema(t)) -> JsonSchema(Option(t)) {
     node: NullableNode(inner: inner.node),
     decoder: decode.optional(inner.decoder),
   )
+}
+
+// --- Enum / Const ---
+
+pub fn enum(values: List(String)) -> JsonSchema(String) {
+  let decoder = enum_decoder(values, fn(s) { s })
+  JsonSchema(node: EnumNode(values:), decoder:)
+}
+
+pub fn enum_map(variants: List(#(String, t))) -> JsonSchema(t) {
+  let decoder =
+    enum_decoder(list.map(variants, fn(v) { v.0 }), fn(s) {
+      let assert Ok(#(_, mapped)) = list.find(variants, fn(v) { v.0 == s })
+      mapped
+    })
+  JsonSchema(
+    node: EnumNode(values: list.map(variants, fn(v) { v.0 })),
+    decoder:,
+  )
+}
+
+pub fn constant(value: String) -> JsonSchema(String) {
+  let decoder = enum_decoder([value], fn(s) { s })
+  JsonSchema(node: ConstNode(value:), decoder:)
+}
+
+pub fn constant_map(value: String, mapped mapped: t) -> JsonSchema(t) {
+  let decoder = enum_decoder([value], fn(_) { mapped })
+  JsonSchema(node: ConstNode(value:), decoder:)
+}
+
+fn enum_decoder(
+  values: List(String),
+  mapper: fn(String) -> t,
+) -> decode.Decoder(t) {
+  let assert [first, ..rest] =
+    list.map(values, fn(v) {
+      decode.string
+      |> decode.then(fn(s) {
+        case s == v {
+          True -> decode.success(mapper(v))
+          False ->
+            decode.failure(mapper(v), "one of: " <> string.join(values, ", "))
+        }
+      })
+    })
+  decode.one_of(first, rest)
 }
 
 // --- Annotation ---
@@ -259,6 +309,16 @@ fn node_to_pairs(node: SchemaNode) -> List(#(String, json.Json)) {
       }
     }
 
+    EnumNode(values:) -> [
+      #("type", json.string("string")),
+      #("enum", json.preprocessed_array(list.map(values, json.string))),
+    ]
+
+    ConstNode(value:) -> [
+      #("type", json.string("string")),
+      #("const", json.string(value)),
+    ]
+
     DescriptionNode(inner:, description:) ->
       list.append(node_to_pairs(inner), [
         #("description", json.string(description)),
@@ -280,6 +340,8 @@ fn get_type_name(node: SchemaNode) -> Result(String, Nil) {
     BooleanNode -> Ok("boolean")
     ArrayNode(..) -> Ok("array")
     ObjectNode(..) -> Ok("object")
+    EnumNode(..) -> Ok("string")
+    ConstNode(..) -> Ok("string")
     DescriptionNode(inner:, ..) -> get_type_name(inner)
     NullableNode(..) -> Error(Nil)
   }

@@ -163,10 +163,7 @@ pub fn decode_object_test() {
     use age <- js.field("age", js.integer())
     js.success(User(name:, age:))
   }
-  assert js.decode(
-      schema,
-      from: "{\"name\":\"Alice\",\"age\":30}",
-    )
+  assert js.decode(schema, from: "{\"name\":\"Alice\",\"age\":30}")
     == Ok(User(name: "Alice", age: 30))
 }
 
@@ -199,10 +196,7 @@ pub fn decode_optional_or_null_present_test() {
     use nickname <- js.optional_or_null("nickname", js.string())
     js.success(UserWithNickname(name:, nickname:))
   }
-  assert js.decode(
-      schema,
-      from: "{\"name\":\"Alice\",\"nickname\":\"Ali\"}",
-    )
+  assert js.decode(schema, from: "{\"name\":\"Alice\",\"nickname\":\"Ali\"}")
     == Ok(UserWithNickname(name: "Alice", nickname: Some("Ali")))
 }
 
@@ -212,10 +206,7 @@ pub fn decode_optional_or_null_null_test() {
     use nickname <- js.optional_or_null("nickname", js.string())
     js.success(UserWithNickname(name:, nickname:))
   }
-  assert js.decode(
-      schema,
-      from: "{\"name\":\"Alice\",\"nickname\":null}",
-    )
+  assert js.decode(schema, from: "{\"name\":\"Alice\",\"nickname\":null}")
     == Ok(UserWithNickname(name: "Alice", nickname: None))
 }
 
@@ -278,7 +269,10 @@ pub type Company {
 fn address_schema() {
   use street <- js.field("street", js.string() |> js.describe("Street address"))
   use city <- js.field("city", js.string())
-  use zip <- js.optional("zip", js.string() |> js.describe("ZIP or postal code"))
+  use zip <- js.optional(
+    "zip",
+    js.string() |> js.describe("ZIP or postal code"),
+  )
   js.success(Address(street:, city:, zip:))
 }
 
@@ -290,14 +284,35 @@ fn tag_schema() {
 
 fn company_schema() {
   use name <- js.field("name", js.string() |> js.describe("Legal company name"))
-  use founded_year <- js.field("founded_year", js.integer() |> js.describe("Year the company was founded"))
-  use public <- js.field("public", js.boolean() |> js.describe("Whether publicly traded"))
-  use rating <- js.optional_or_null("rating", js.number() |> js.describe("Rating from 0.0 to 5.0"))
+  use founded_year <- js.field(
+    "founded_year",
+    js.integer() |> js.describe("Year the company was founded"),
+  )
+  use public <- js.field(
+    "public",
+    js.boolean() |> js.describe("Whether publicly traded"),
+  )
+  use rating <- js.optional_or_null(
+    "rating",
+    js.number() |> js.describe("Rating from 0.0 to 5.0"),
+  )
   use address <- js.field("address", address_schema())
-  use tags <- js.field("tags", js.array(of: tag_schema()) |> js.describe("Categorization tags"))
+  use tags <- js.field(
+    "tags",
+    js.array(of: tag_schema()) |> js.describe("Categorization tags"),
+  )
   use website <- js.optional("website", js.string())
   use phone <- js.optional_or_null("phone", js.string())
-  js.success(Company(name:, founded_year:, public:, rating:, address:, tags:, website:, phone:))
+  js.success(Company(
+    name:,
+    founded_year:,
+    public:,
+    rating:,
+    address:,
+    tags:,
+    website:,
+    phone:,
+  ))
 }
 
 pub fn complex_schema_output_test() {
@@ -341,7 +356,10 @@ pub fn complex_decode_full_test() {
         city: "Springfield",
         zip: Some("62704"),
       ),
-      tags: [Tag(key: "industry", value: "tech"), Tag(key: "size", value: "large")],
+      tags: [
+        Tag(key: "industry", value: "tech"),
+        Tag(key: "size", value: "large"),
+      ],
       website: Some("https://acme.example.com"),
       phone: Some("+1-555-0100"),
     ))
@@ -364,6 +382,111 @@ pub fn complex_decode_minimal_test() {
       website: None,
       phone: None,
     ))
+}
+
+// --- Enum schema output ---
+
+pub fn enum_schema_test() {
+  let schema = js.enum(["red", "green", "blue"])
+  assert js.to_string(schema)
+    == "{\"type\":\"string\",\"enum\":[\"red\",\"green\",\"blue\"]}"
+}
+
+pub type Color {
+  Red
+  Green
+  Blue
+}
+
+pub fn enum_map_schema_test() {
+  let schema = js.enum_map([#("red", Red), #("green", Green), #("blue", Blue)])
+  assert js.to_string(schema)
+    == "{\"type\":\"string\",\"enum\":[\"red\",\"green\",\"blue\"]}"
+}
+
+pub fn const_schema_test() {
+  let schema = js.constant("active")
+  assert js.to_string(schema) == "{\"type\":\"string\",\"const\":\"active\"}"
+}
+
+pub fn const_map_schema_test() {
+  let schema = js.constant_map("active", True)
+  assert js.to_string(schema) == "{\"type\":\"string\",\"const\":\"active\"}"
+}
+
+pub fn enum_with_describe_test() {
+  let schema =
+    js.enum(["low", "medium", "high"])
+    |> js.describe("Priority level")
+  assert js.to_string(schema)
+    == "{\"type\":\"string\",\"enum\":[\"low\",\"medium\",\"high\"],\"description\":\"Priority level\"}"
+}
+
+pub fn nullable_enum_test() {
+  let schema = js.nullable(js.enum(["a", "b"]))
+  assert js.to_string(schema)
+    == "{\"type\":[\"string\",\"null\"],\"enum\":[\"a\",\"b\"]}"
+}
+
+// --- Enum decode ---
+
+pub fn decode_enum_valid_test() {
+  let schema = js.enum(["red", "green", "blue"])
+  assert js.decode(schema, from: "\"red\"") == Ok("red")
+  assert js.decode(schema, from: "\"blue\"") == Ok("blue")
+}
+
+pub fn decode_enum_invalid_test() {
+  let schema = js.enum(["red", "green", "blue"])
+  assert js.decode(schema, from: "\"yellow\"") |> is_error
+}
+
+pub fn decode_enum_map_test() {
+  let schema = js.enum_map([#("red", Red), #("green", Green), #("blue", Blue)])
+  assert js.decode(schema, from: "\"red\"") == Ok(Red)
+  assert js.decode(schema, from: "\"green\"") == Ok(Green)
+  assert js.decode(schema, from: "\"blue\"") == Ok(Blue)
+}
+
+pub fn decode_enum_map_invalid_test() {
+  let schema = js.enum_map([#("red", Red), #("green", Green), #("blue", Blue)])
+  assert js.decode(schema, from: "\"yellow\"") |> is_error
+}
+
+pub fn decode_const_test() {
+  let schema = js.constant("active")
+  assert js.decode(schema, from: "\"active\"") == Ok("active")
+}
+
+pub fn decode_const_invalid_test() {
+  let schema = js.constant("active")
+  assert js.decode(schema, from: "\"inactive\"") |> is_error
+}
+
+pub fn decode_const_map_test() {
+  let schema = js.constant_map("yes", True)
+  assert js.decode(schema, from: "\"yes\"") == Ok(True)
+}
+
+// --- Enum in object ---
+
+pub type Task {
+  Task(title: String, priority: String)
+}
+
+pub fn enum_in_object_test() {
+  let schema = {
+    use title <- js.field("title", js.string())
+    use priority <- js.field("priority", js.enum(["low", "medium", "high"]))
+    js.success(Task(title:, priority:))
+  }
+  assert js.to_string(schema)
+    == "{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\"},\"priority\":{\"type\":\"string\",\"enum\":[\"low\",\"medium\",\"high\"]}},\"required\":[\"title\",\"priority\"]}"
+  assert js.decode(
+      schema,
+      from: "{\"title\":\"Do stuff\",\"priority\":\"high\"}",
+    )
+    == Ok(Task(title: "Do stuff", priority: "high"))
 }
 
 pub fn complex_decode_nulls_test() {

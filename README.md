@@ -186,6 +186,27 @@ use value <- js.optional("name", js.string())
 use value <- js.optional_or_null("name", js.string())
 ```
 
+### Enum / Const
+
+| Function | Type | JSON Schema |
+|---|---|---|
+| `js.enum(["a", "b"])` | `JsonSchema(String)` | `{"type": "string", "enum": ["a", "b"]}` |
+| `js.enum_map([#("a", A), #("b", B)])` | `JsonSchema(t)` | `{"type": "string", "enum": ["a", "b"]}` |
+| `js.constant("a")` | `JsonSchema(String)` | `{"type": "string", "const": "a"}` |
+| `js.constant_map("a", A)` | `JsonSchema(t)` | `{"type": "string", "const": "a"}` |
+
+The `_map` variants decode to a custom Gleam type instead of `String`:
+
+```gleam
+type Color { Red Green Blue }
+
+// Decodes to String
+js.enum(["red", "green", "blue"])
+
+// Decodes to Color
+js.enum_map([#("red", Red), #("green", Green), #("blue", Blue)])
+```
+
 ### Annotations
 
 ```gleam
@@ -200,6 +221,63 @@ js.to_json(schema)                      // -> json.Json (for embedding in larger
 js.decode(schema, from: json_string)    // -> Result(t, json.DecodeError)
 ```
 
-## Targets
+## JSON Schema coverage
 
-Works on both Erlang and JavaScript targets.
+| Feature | Status | Notes |
+|---|---|---|
+| **Types** | | |
+| `string` | Supported | |
+| `integer` | Supported | |
+| `number` | Supported | |
+| `boolean` | Supported | |
+| `array` | Supported | |
+| `object` | Supported | Nested objects, required/optional fields |
+| `null` / nullable | Supported | Via `nullable`, `optional_or_null` |
+| `enum` | Supported | String values via `enum`, `enum_map` |
+| `const` | Supported | String values via `constant`, `constant_map` |
+| **Composition** | | |
+| `oneOf` | Not yet | Discriminated unions |
+| `anyOf` | Not yet | Union types |
+| `allOf` | Not yet | Intersection / schema merging |
+| `not` | Not yet | Negation |
+| `$ref` / `$defs` | Not yet | Reusable schema definitions |
+| **Object keywords** | | |
+| `properties` | Supported | |
+| `required` | Supported | |
+| `additionalProperties` | Not yet | |
+| `patternProperties` | Not yet | |
+| `propertyNames` | Not yet | |
+| `minProperties` / `maxProperties` | Not yet | |
+| `dependentRequired` / `dependentSchemas` | Not yet | |
+| **Array keywords** | | |
+| `items` | Supported | |
+| `prefixItems` | Not yet | Tuple validation |
+| `minItems` / `maxItems` | Not yet | |
+| `uniqueItems` | Not yet | |
+| `contains` | Not yet | |
+| **String validation** | | |
+| `minLength` / `maxLength` | Not yet | |
+| `pattern` | Not yet | Regex |
+| `format` | Not yet | email, uri, date-time, etc. |
+| **Number validation** | | |
+| `minimum` / `maximum` | Not yet | |
+| `exclusiveMinimum` / `exclusiveMaximum` | Not yet | |
+| `multipleOf` | Not yet | |
+| **Annotations** | | |
+| `description` | Supported | Via `describe` |
+| `title` | Not yet | |
+| `default` | Not yet | |
+| `examples` | Not yet | |
+| `deprecated` | Not yet | |
+| `readOnly` / `writeOnly` | Not yet | |
+| **Conditional** | | |
+| `if` / `then` / `else` | Not yet | |
+| **Meta** | | |
+| `$schema` | Not yet | Draft identifier |
+| `$id` | Not yet | |
+| `$comment` | Not yet | |
+
+## Compatibility
+
+- Requires `gleam_json` >= 3.0
+- Works on both Erlang and JavaScript targets
