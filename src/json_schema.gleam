@@ -18,6 +18,12 @@ type SchemaNode {
   EnumNode(values: List(String))
   ConstNode(value: String)
   DefaultNode(inner: SchemaNode, default: json.Json)
+  CombinerNode(keyword: CombinerKeyword, variants: List(SchemaNode))
+}
+
+type CombinerKeyword {
+  OneOf
+  AnyOf
 }
 
 type ObjectField {
@@ -304,6 +310,144 @@ pub fn describe(
   JsonSchema(
     node: DescriptionNode(inner: schema.node, description:),
     decoder: schema.decoder,
+  )
+}
+
+// --- Combinators ---
+
+/// Transform the decoded type of a schema without changing its JSON Schema output.
+///
+/// The schema definition stays the same, but the decoder maps decoded values
+/// through the given function. Useful for wrapping primitives in custom types
+/// or making different schemas produce the same type for use with `one_of`.
+///
+/// ## Examples
+///
+/// ```gleam
+/// type Email { Email(String) }
+///
+/// let schema = json_schema.string() |> json_schema.map(Email)
+/// json_schema.to_string(schema)
+/// // -> "{\"type\":\"string\"}"
+///
+/// json_schema.decode(schema, from: "\"a@b.com\"")
+/// // -> Ok(Email("a@b.com"))
+/// ```
+pub fn map(schema: JsonSchema(a), with transform: fn(a) -> b) -> JsonSchema(b) {
+  JsonSchema(
+    node: schema.node,
+    decoder: decode.then(schema.decoder, fn(a) { decode.success(transform(a)) }),
+  )
+}
+
+/// A schema where the value must match exactly one of the given sub-schemas.
+///
+/// Produces `{"oneOf": [...]}`. The decoder tries each variant in order and
+/// returns the first successful match. All variants must decode to the same
+/// Gleam type `t` — use `map` to align types if needed.
+///
+/// ## Examples
+///
+/// ```gleam
+/// type Value { TextVal(String) NumVal(Int) }
+///
+/// let schema = json_schema.one_of([
+///   json_schema.string() |> json_schema.map(TextVal),
+///   json_schema.integer() |> json_schema.map(NumVal),
+/// ])
+/// json_schema.to_string(schema)
+/// // -> "{\"oneOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]}"
+/// ```
+pub fn one_of(variants: List(JsonSchema(t))) -> JsonSchema(t) {
+  let assert [first, ..rest] = variants
+  JsonSchema(
+    node: CombinerNode(
+      keyword: OneOf,
+      variants: list.map(variants, fn(v) { v.node }),
+    ),
+    decoder: decode.one_of(first.decoder, list.map(rest, fn(v) { v.decoder })),
+  )
+}
+
+/// A schema where the value must match at least one of the given sub-schemas.
+///
+/// Produces `{"anyOf": [...]}`. Behaves identically to `one_of` for decoding
+/// (first match wins), but generates `anyOf` instead of `oneOf` in the schema.
+/// The distinction matters for JSON Schema validation: `oneOf` requires exactly
+/// one match, `anyOf` allows multiple.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let schema = json_schema.any_of([
+///   json_schema.string() |> json_schema.map(TextVal),
+///   json_schema.integer() |> json_schema.map(NumVal),
+/// ])
+/// json_schema.to_string(schema)
+/// // -> "{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]}"
+/// ```
+pub fn any_of(variants: List(JsonSchema(t))) -> JsonSchema(t) {
+  let assert [first, ..rest] = variants
+  JsonSchema(
+    node: CombinerNode(
+      keyword: AnyOf,
+      variants: list.map(variants, fn(v) { v.node }),
+    ),
+    decoder: decode.one_of(first.decoder, list.map(rest, fn(v) { v.decoder })),
+  )
+}
+
+/// A schema for discriminated unions (tagged unions).
+///
+/// Produces a `oneOf` schema where each variant is an object with a
+/// discriminator field set to a constant tag value. The decoder checks
+/// the discriminator field to select the correct variant.
+///
+/// ## Examples
+///
+/// ```gleam
+/// type Shape { Circle(Float) Square(Float) }
+///
+/// let schema = json_schema.tagged_union("type", [
+///   #("circle", {
+///     use radius <- json_schema.field("radius", json_schema.number())
+///     json_schema.success(Circle(radius))
+///   }),
+///   #("square", {
+///     use side <- json_schema.field("side", json_schema.number())
+///     json_schema.success(Square(side))
+///   }),
+/// ])
+/// ```
+pub fn tagged_union(
+  discriminator discriminator: String,
+  variants variants: List(#(String, JsonSchema(t))),
+) -> JsonSchema(t) {
+  // Build schema: add const discriminator field to each variant's object
+  let schema_variants =
+    list.map(variants, fn(variant) {
+      let #(tag, schema) = variant
+      let fields = get_object_fields(schema.node)
+      ObjectNode(fields: [
+        ObjectField(name: discriminator, schema: ConstNode(tag), required: True),
+        ..fields
+      ])
+    })
+
+  // Build decoder: check discriminator field, then run variant's decoder
+  let assert [first_decoder, ..rest_decoders] =
+    list.map(variants, fn(variant) {
+      let #(tag, schema) = variant
+      use decoded_tag <- decode.field(discriminator, decode.string)
+      case decoded_tag == tag {
+        True -> schema.decoder
+        False -> decode.failure(coerce_nil(), tag)
+      }
+    })
+
+  JsonSchema(
+    node: CombinerNode(keyword: OneOf, variants: schema_variants),
+    decoder: decode.one_of(first_decoder, rest_decoders),
   )
 }
 
@@ -656,6 +800,19 @@ fn node_to_pairs(node: SchemaNode) -> List(#(String, json.Json)) {
 
     DefaultNode(inner:, default:) ->
       list.append(node_to_pairs(inner), [#("default", default)])
+
+    CombinerNode(keyword:, variants:) -> {
+      let keyword_str = case keyword {
+        OneOf -> "oneOf"
+        AnyOf -> "anyOf"
+      }
+      [
+        #(
+          keyword_str,
+          json.preprocessed_array(list.map(variants, node_to_json)),
+        ),
+      ]
+    }
   }
 }
 
@@ -678,5 +835,6 @@ fn get_type_name(node: SchemaNode) -> Result(String, Nil) {
     DescriptionNode(inner:, ..) -> get_type_name(inner)
     DefaultNode(inner:, ..) -> get_type_name(inner)
     NullableNode(..) -> Error(Nil)
+    CombinerNode(..) -> Error(Nil)
   }
 }

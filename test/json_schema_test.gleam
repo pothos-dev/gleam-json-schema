@@ -577,6 +577,177 @@ pub fn enum_in_object_test() {
     == Ok(Task(title: "Do stuff", priority: "high"))
 }
 
+// --- Map tests ---
+
+pub type Email {
+  Email(String)
+}
+
+pub fn map_schema_test() {
+  let schema = js.string() |> js.map(Email)
+  assert js.to_string(schema) == "{\"type\":\"string\"}"
+}
+
+pub fn decode_map_test() {
+  let schema = js.string() |> js.map(Email)
+  assert js.decode(schema, from: "\"a@b.com\"") == Ok(Email("a@b.com"))
+}
+
+// --- oneOf tests ---
+
+pub type Value {
+  TextVal(String)
+  NumVal(Int)
+  BoolVal(Bool)
+}
+
+pub fn one_of_schema_test() {
+  let schema =
+    js.one_of([
+      js.string() |> js.map(TextVal),
+      js.integer() |> js.map(NumVal),
+    ])
+  assert js.to_string(schema)
+    == "{\"oneOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]}"
+}
+
+pub fn decode_one_of_first_test() {
+  let schema =
+    js.one_of([
+      js.string() |> js.map(TextVal),
+      js.integer() |> js.map(NumVal),
+    ])
+  assert js.decode(schema, from: "\"hello\"") == Ok(TextVal("hello"))
+}
+
+pub fn decode_one_of_second_test() {
+  let schema =
+    js.one_of([
+      js.string() |> js.map(TextVal),
+      js.integer() |> js.map(NumVal),
+    ])
+  assert js.decode(schema, from: "42") == Ok(NumVal(42))
+}
+
+pub fn decode_one_of_invalid_test() {
+  let schema =
+    js.one_of([
+      js.string() |> js.map(TextVal),
+      js.integer() |> js.map(NumVal),
+    ])
+  assert js.decode(schema, from: "true") |> is_error
+}
+
+// --- anyOf tests ---
+
+pub fn any_of_schema_test() {
+  let schema =
+    js.any_of([
+      js.string() |> js.map(TextVal),
+      js.integer() |> js.map(NumVal),
+    ])
+  assert js.to_string(schema)
+    == "{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]}"
+}
+
+pub fn decode_any_of_test() {
+  let schema =
+    js.any_of([
+      js.string() |> js.map(TextVal),
+      js.integer() |> js.map(NumVal),
+    ])
+  assert js.decode(schema, from: "\"hi\"") == Ok(TextVal("hi"))
+  assert js.decode(schema, from: "7") == Ok(NumVal(7))
+}
+
+// --- tagged_union tests ---
+
+pub type Shape {
+  Circle(radius: Float)
+  Square(side: Float)
+}
+
+pub fn tagged_union_schema_test() {
+  let schema =
+    js.tagged_union("type", [
+      #("circle", {
+        use radius <- js.field("radius", js.number())
+        js.success(Circle(radius))
+      }),
+      #("square", {
+        use side <- js.field("side", js.number())
+        js.success(Square(side))
+      }),
+    ])
+  assert js.to_string(schema)
+    == "{\"oneOf\":[{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"const\":\"circle\"},\"radius\":{\"type\":\"number\"}},\"required\":[\"type\",\"radius\"]},{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"const\":\"square\"},\"side\":{\"type\":\"number\"}},\"required\":[\"type\",\"side\"]}]}"
+}
+
+pub fn decode_tagged_union_first_test() {
+  let schema =
+    js.tagged_union("type", [
+      #("circle", {
+        use radius <- js.field("radius", js.number())
+        js.success(Circle(radius))
+      }),
+      #("square", {
+        use side <- js.field("side", js.number())
+        js.success(Square(side))
+      }),
+    ])
+  assert js.decode(schema, from: "{\"type\":\"circle\",\"radius\":5.0}")
+    == Ok(Circle(5.0))
+}
+
+pub fn decode_tagged_union_second_test() {
+  let schema =
+    js.tagged_union("type", [
+      #("circle", {
+        use radius <- js.field("radius", js.number())
+        js.success(Circle(radius))
+      }),
+      #("square", {
+        use side <- js.field("side", js.number())
+        js.success(Square(side))
+      }),
+    ])
+  assert js.decode(schema, from: "{\"type\":\"square\",\"side\":3.0}")
+    == Ok(Square(3.0))
+}
+
+pub fn decode_tagged_union_invalid_tag_test() {
+  let schema =
+    js.tagged_union("type", [
+      #("circle", {
+        use radius <- js.field("radius", js.number())
+        js.success(Circle(radius))
+      }),
+      #("square", {
+        use side <- js.field("side", js.number())
+        js.success(Square(side))
+      }),
+    ])
+  assert js.decode(schema, from: "{\"type\":\"triangle\",\"side\":3.0}")
+    |> is_error
+}
+
+pub fn tagged_union_with_describe_test() {
+  let schema =
+    js.tagged_union("kind", [
+      #("text", {
+        use content <- js.field("content", js.string())
+        js.success(TextVal(content))
+      }),
+      #("num", {
+        use value <- js.field("value", js.integer())
+        js.success(NumVal(value))
+      }),
+    ])
+    |> js.describe("A tagged value")
+  assert js.to_string(schema)
+    == "{\"oneOf\":[{\"type\":\"object\",\"properties\":{\"kind\":{\"type\":\"string\",\"const\":\"text\"},\"content\":{\"type\":\"string\"}},\"required\":[\"kind\",\"content\"]},{\"type\":\"object\",\"properties\":{\"kind\":{\"type\":\"string\",\"const\":\"num\"},\"value\":{\"type\":\"integer\"}},\"required\":[\"kind\",\"value\"]}],\"description\":\"A tagged value\"}"
+}
+
 pub fn complex_decode_nulls_test() {
   let schema = company_schema()
   let input =

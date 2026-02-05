@@ -212,6 +212,82 @@ js.enum(["red", "green", "blue"])
 js.enum_map([#("red", Red), #("green", Green), #("blue", Blue)])
 ```
 
+### Combinators
+
+| Function | JSON Schema | Description |
+|---|---|---|
+| `js.map(schema, transform)` | *(unchanged)* | Transform decoded type without changing schema |
+| `js.one_of([a, b, ...])` | `{"oneOf": [...]}` | Value must match exactly one sub-schema |
+| `js.any_of([a, b, ...])` | `{"anyOf": [...]}` | Value must match at least one sub-schema |
+| `js.tagged_union("type", [...])` | `{"oneOf": [...]}` with discriminator | Discriminated union with tag field |
+
+Use `map` to align types for `one_of` / `any_of`:
+
+```gleam
+type Value { TextVal(String) NumVal(Int) }
+
+let schema = js.one_of([
+  js.string() |> js.map(TextVal),
+  js.integer() |> js.map(NumVal),
+])
+```
+
+Use `tagged_union` for discriminated unions:
+
+```gleam
+type Shape { Circle(Float) Square(Float) }
+
+let schema = js.tagged_union("type", [
+  #("circle", {
+    use radius <- js.field("radius", js.number())
+    js.success(Circle(radius))
+  }),
+  #("square", {
+    use side <- js.field("side", js.number())
+    js.success(Square(side))
+  }),
+])
+```
+
+### String validation
+
+All string constraints are enforced during decode.
+
+| Function | JSON Schema | Decode behavior |
+|---|---|---|
+| `js.min_length(schema, n)` | `{"minLength": n}` | Rejects strings shorter than `n` |
+| `js.max_length(schema, n)` | `{"maxLength": n}` | Rejects strings longer than `n` |
+| `js.pattern(schema, regex)` | `{"pattern": "..."}` | Rejects strings not matching the regex |
+
+```gleam
+js.string()
+|> js.min_length(1)
+|> js.max_length(100)
+|> js.pattern("^[a-zA-Z]+$")
+```
+
+### Number validation
+
+All number constraints are enforced during decode. Constraint values are `Float`, and work on both `integer()` and `number()` schemas.
+
+| Function | JSON Schema | Decode behavior |
+|---|---|---|
+| `js.minimum(schema, n)` | `{"minimum": n}` | Rejects values < `n` |
+| `js.maximum(schema, n)` | `{"maximum": n}` | Rejects values > `n` |
+| `js.exclusive_minimum(schema, n)` | `{"exclusiveMinimum": n}` | Rejects values <= `n` |
+| `js.exclusive_maximum(schema, n)` | `{"exclusiveMaximum": n}` | Rejects values >= `n` |
+| `js.multiple_of(schema, n)` | `{"multipleOf": n}` | Rejects values not a multiple of `n` |
+
+```gleam
+js.integer()
+|> js.minimum(0.0)
+|> js.maximum(100.0)
+
+js.number()
+|> js.exclusive_minimum(0.0)
+|> js.multiple_of(0.5)
+```
+
 ### Annotations
 
 ```gleam
@@ -231,56 +307,56 @@ js.decode(schema, from: json_string)    // -> Result(t, json.DecodeError)
 | Feature | Status | Notes |
 |---|---|---|
 | **Types** | | |
-| `string` | Supported | |
-| `integer` | Supported | |
-| `number` | Supported | |
-| `boolean` | Supported | |
-| `array` | Supported | |
-| `object` | Supported | Nested objects, required/optional fields |
-| `null` / nullable | Supported | Via `nullable`, `optional_or_null` |
-| `enum` | Supported | String values via `enum`, `enum_map` |
-| `const` | Supported | String values via `constant`, `constant_map` |
+| `string` | ✅ Supported | |
+| `integer` | ✅ Supported | |
+| `number` | ✅ Supported | |
+| `boolean` | ✅ Supported | |
+| `array` | ✅ Supported | |
+| `object` | ✅ Supported | Nested objects, required/optional fields |
+| `null` / nullable | ✅ Supported | Via `nullable`, `optional_or_null` |
+| `enum` | ✅ Supported | String values via `enum`, `enum_map` |
+| `const` | ✅ Supported | String values via `constant`, `constant_map` |
 | **Composition** | | |
-| `oneOf` | Not yet | Discriminated unions |
-| `anyOf` | Not yet | Union types |
-| `allOf` | Not yet | Intersection / schema merging |
-| `not` | Not yet | Negation |
-| `$ref` / `$defs` | Not yet | Reusable schema definitions |
+| `oneOf` | ✅ Supported | Via `one_of`, `tagged_union` |
+| `anyOf` | ✅ Supported | Via `any_of` |
+| `allOf` | 🚫 Out of scope | Incompatible with Gleam's type system |
+| `not` | 🔲 Not yet | Negation |
+| `$ref` / `$defs` | 🔲 Not yet | Reusable schema definitions |
 | **Object keywords** | | |
-| `properties` | Supported | |
-| `required` | Supported | |
-| `additionalProperties` | Not yet | |
-| `patternProperties` | Not yet | |
-| `propertyNames` | Not yet | |
-| `minProperties` / `maxProperties` | Not yet | |
-| `dependentRequired` / `dependentSchemas` | Not yet | |
+| `properties` | ✅ Supported | |
+| `required` | ✅ Supported | |
+| `additionalProperties` | 🔲 Not yet | |
+| `patternProperties` | 🔲 Not yet | |
+| `propertyNames` | 🔲 Not yet | |
+| `minProperties` / `maxProperties` | 🔲 Not yet | |
+| `dependentRequired` / `dependentSchemas` | 🔲 Not yet | |
 | **Array keywords** | | |
-| `items` | Supported | |
-| `prefixItems` | Not yet | Tuple validation |
-| `minItems` / `maxItems` | Not yet | |
-| `uniqueItems` | Not yet | |
-| `contains` | Not yet | |
+| `items` | ✅ Supported | |
+| `prefixItems` | 🔲 Not yet | Tuple validation |
+| `minItems` / `maxItems` | 🔲 Not yet | |
+| `uniqueItems` | 🔲 Not yet | |
+| `contains` | 🔲 Not yet | |
 | **String validation** | | |
-| `minLength` / `maxLength` | Not yet | |
-| `pattern` | Not yet | Regex |
-| `format` | Not yet | email, uri, date-time, etc. |
+| `minLength` / `maxLength` | ✅ Supported | Via `min_length`, `max_length` |
+| `pattern` | ✅ Supported | Via `pattern` |
+| `format` | 🚫 Out of scope | Validating formats is out of scope |
 | **Number validation** | | |
-| `minimum` / `maximum` | Not yet | |
-| `exclusiveMinimum` / `exclusiveMaximum` | Not yet | |
-| `multipleOf` | Not yet | |
+| `minimum` / `maximum` | ✅ Supported | Via `minimum`, `maximum` |
+| `exclusiveMinimum` / `exclusiveMaximum` | ✅ Supported | Via `exclusive_minimum`, `exclusive_maximum` |
+| `multipleOf` | ✅ Supported | Via `multiple_of` |
 | **Annotations** | | |
-| `description` | Supported | Via `describe` |
-| `title` | Not yet | |
-| `default` | Supported | Via `field_with_default` |
-| `examples` | Not yet | |
-| `deprecated` | Not yet | |
-| `readOnly` / `writeOnly` | Not yet | |
+| `description` | ✅ Supported | Via `describe` |
+| `title` | 🔲 Not yet | |
+| `default` | ✅ Supported | Via `field_with_default` |
+| `examples` | 🔲 Not yet | |
+| `deprecated` | 🔲 Not yet | |
+| `readOnly` / `writeOnly` | 🔲 Not yet | |
 | **Conditional** | | |
-| `if` / `then` / `else` | Not yet | |
+| `if` / `then` / `else` | 🔲 Not yet | |
 | **Meta** | | |
-| `$schema` | Not yet | Draft identifier |
-| `$id` | Not yet | |
-| `$comment` | Not yet | |
+| `$schema` | 🔲 Not yet | Draft identifier |
+| `$id` | 🔲 Not yet | |
+| `$comment` | 🔲 Not yet | |
 
 ## Compatibility
 
