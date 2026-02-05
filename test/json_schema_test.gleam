@@ -1,3 +1,4 @@
+import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleeunit
 import json_schema as js
@@ -218,6 +219,93 @@ pub fn decode_optional_or_null_absent_test() {
   }
   assert js.decode(schema, from: "{\"name\":\"Alice\"}")
     == Ok(UserWithNickname(name: "Alice", nickname: None))
+}
+
+// --- Default value tests ---
+
+pub type Config {
+  Config(host: String, port: Int, verbose: Bool)
+}
+
+pub fn field_with_default_schema_test() {
+  let schema = {
+    use host <- js.field("host", js.string())
+    use port <- js.field_with_default(
+      "port",
+      js.integer(),
+      default: 8080,
+      encode: json.int,
+    )
+    use verbose <- js.field_with_default(
+      "verbose",
+      js.boolean(),
+      default: False,
+      encode: json.bool,
+    )
+    js.success(Config(host:, port:, verbose:))
+  }
+  assert js.to_string(schema)
+    == "{\"type\":\"object\",\"properties\":{\"host\":{\"type\":\"string\"},\"port\":{\"type\":\"integer\",\"default\":8080},\"verbose\":{\"type\":\"boolean\",\"default\":false}},\"required\":[\"host\"]}"
+}
+
+pub fn decode_field_with_default_absent_test() {
+  let schema = {
+    use host <- js.field("host", js.string())
+    use port <- js.field_with_default(
+      "port",
+      js.integer(),
+      default: 8080,
+      encode: json.int,
+    )
+    js.success(#(host, port))
+  }
+  assert js.decode(schema, from: "{\"host\":\"localhost\"}")
+    == Ok(#("localhost", 8080))
+}
+
+pub fn decode_field_with_default_present_test() {
+  let schema = {
+    use host <- js.field("host", js.string())
+    use port <- js.field_with_default(
+      "port",
+      js.integer(),
+      default: 8080,
+      encode: json.int,
+    )
+    js.success(#(host, port))
+  }
+  assert js.decode(schema, from: "{\"host\":\"localhost\",\"port\":3000}")
+    == Ok(#("localhost", 3000))
+}
+
+pub fn field_with_default_string_test() {
+  let schema = {
+    use name <- js.field_with_default(
+      "name",
+      js.string(),
+      default: "anon",
+      encode: json.string,
+    )
+    js.success(name)
+  }
+  assert js.to_string(schema)
+    == "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\",\"default\":\"anon\"}}}"
+  assert js.decode(schema, from: "{}") == Ok("anon")
+  assert js.decode(schema, from: "{\"name\":\"Alice\"}") == Ok("Alice")
+}
+
+pub fn field_with_default_with_describe_test() {
+  let schema = {
+    use port <- js.field_with_default(
+      "port",
+      js.integer() |> js.describe("Port number"),
+      default: 8080,
+      encode: json.int,
+    )
+    js.success(port)
+  }
+  assert js.to_string(schema)
+    == "{\"type\":\"object\",\"properties\":{\"port\":{\"type\":\"integer\",\"description\":\"Port number\",\"default\":8080}}}"
 }
 
 // --- Error cases ---

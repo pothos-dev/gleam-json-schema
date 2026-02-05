@@ -2,6 +2,9 @@
 
 A Gleam library for JSON Schema generation and decoding. Define a schema once, then use it to both generate a JSON Schema string and decode JSON values into typed Gleam data.
 
+[![Package Version](https://img.shields.io/hexpm/v/json_schema)](https://hex.pm/packages/json_schema)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/json_schema/)
+
 ```sh
 gleam add json_schema@1
 ```
@@ -177,13 +180,15 @@ js.decode(company_schema(), from: "{\"name\":\"Null Inc\",\"founded_year\":2010,
 | `js.field` | yes | no | `t` |
 | `js.optional` | no | no | `Option(t)` |
 | `js.optional_or_null` | no | yes | `Option(t)` |
+| `js.field_with_default` | no | no | `t` (uses default when absent) |
 
-All three are used with Gleam's `use` syntax to chain fields:
+All four are used with Gleam's `use` syntax to chain fields:
 
 ```gleam
 use value <- js.field("name", js.string())
 use value <- js.optional("name", js.string())
 use value <- js.optional_or_null("name", js.string())
+use value <- js.field_with_default("port", js.integer(), default: 8080, encode: json.int)
 ```
 
 ### Enum / Const
@@ -266,7 +271,7 @@ js.decode(schema, from: json_string)    // -> Result(t, json.DecodeError)
 | **Annotations** | | |
 | `description` | Supported | Via `describe` |
 | `title` | Not yet | |
-| `default` | Not yet | |
+| `default` | Supported | Via `field_with_default` |
 | `examples` | Not yet | |
 | `deprecated` | Not yet | |
 | `readOnly` / `writeOnly` | Not yet | |

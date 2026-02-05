@@ -17,6 +17,7 @@ type SchemaNode {
   DescriptionNode(inner: SchemaNode, description: String)
   EnumNode(values: List(String))
   ConstNode(value: String)
+  DefaultNode(inner: SchemaNode, default: json.Json)
 }
 
 type ObjectField {
@@ -25,6 +26,15 @@ type ObjectField {
 
 // --- Public type ---
 
+/// A combined JSON Schema and decoder for values of type `t`.
+///
+/// Each `JsonSchema(t)` carries both a schema definition (for generating
+/// JSON Schema output) and a decoder (for parsing JSON into Gleam values),
+/// keeping the two in sync by construction.
+///
+/// Build schemas using the primitive constructors (`string`, `integer`, etc.),
+/// composites (`array`, `nullable`), and object builders (`field`, `optional`,
+/// etc.), then use `to_json`, `to_string`, or `decode` to consume them.
 pub opaque type JsonSchema(t) {
   JsonSchema(node: SchemaNode, decoder: decode.Decoder(t))
 }
@@ -37,24 +47,95 @@ fn coerce_nil() -> a
 
 // --- Primitives ---
 
+/// A schema for JSON strings.
+///
+/// Produces `{"type": "string"}` and decodes JSON strings into `String`.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let schema = json_schema.string()
+/// json_schema.to_string(schema)
+/// // -> "{\"type\":\"string\"}"
+///
+/// json_schema.decode(schema, from: "\"hello\"")
+/// // -> Ok("hello")
+/// ```
 pub fn string() -> JsonSchema(String) {
   JsonSchema(node: StringNode, decoder: decode.string)
 }
 
+/// A schema for JSON integers.
+///
+/// Produces `{"type": "integer"}` and decodes JSON integers into `Int`.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let schema = json_schema.integer()
+/// json_schema.to_string(schema)
+/// // -> "{\"type\":\"integer\"}"
+///
+/// json_schema.decode(schema, from: "42")
+/// // -> Ok(42)
+/// ```
 pub fn integer() -> JsonSchema(Int) {
   JsonSchema(node: IntegerNode, decoder: decode.int)
 }
 
+/// A schema for JSON numbers (floating point).
+///
+/// Produces `{"type": "number"}` and decodes JSON numbers into `Float`.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let schema = json_schema.number()
+/// json_schema.to_string(schema)
+/// // -> "{\"type\":\"number\"}"
+///
+/// json_schema.decode(schema, from: "3.14")
+/// // -> Ok(3.14)
+/// ```
 pub fn number() -> JsonSchema(Float) {
   JsonSchema(node: NumberNode, decoder: decode.float)
 }
 
+/// A schema for JSON booleans.
+///
+/// Produces `{"type": "boolean"}` and decodes JSON booleans into `Bool`.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let schema = json_schema.boolean()
+/// json_schema.to_string(schema)
+/// // -> "{\"type\":\"boolean\"}"
+///
+/// json_schema.decode(schema, from: "true")
+/// // -> Ok(True)
+/// ```
 pub fn boolean() -> JsonSchema(Bool) {
   JsonSchema(node: BooleanNode, decoder: decode.bool)
 }
 
 // --- Composites ---
 
+/// A schema for JSON arrays where every element matches the given inner schema.
+///
+/// Produces `{"type": "array", "items": <inner>}` and decodes JSON arrays
+/// into `List(t)`.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let schema = json_schema.array(of: json_schema.string())
+/// json_schema.to_string(schema)
+/// // -> "{\"type\":\"array\",\"items\":{\"type\":\"string\"}}"
+///
+/// json_schema.decode(schema, from: "[\"a\",\"b\"]")
+/// // -> Ok(["a", "b"])
+/// ```
 pub fn array(of inner: JsonSchema(t)) -> JsonSchema(List(t)) {
   JsonSchema(
     node: ArrayNode(items: inner.node),
@@ -62,6 +143,25 @@ pub fn array(of inner: JsonSchema(t)) -> JsonSchema(List(t)) {
   )
 }
 
+/// A schema for values that may be `null`.
+///
+/// Wraps an inner schema to also accept JSON `null`. Produces a schema with
+/// `"type": ["<inner_type>", "null"]` for simple inner types, or an `anyOf`
+/// for complex ones. Decodes into `Option(t)`.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let schema = json_schema.nullable(json_schema.string())
+/// json_schema.to_string(schema)
+/// // -> "{\"type\":[\"string\",\"null\"]}"
+///
+/// json_schema.decode(schema, from: "\"hello\"")
+/// // -> Ok(Some("hello"))
+///
+/// json_schema.decode(schema, from: "null")
+/// // -> Ok(None)
+/// ```
 pub fn nullable(inner: JsonSchema(t)) -> JsonSchema(Option(t)) {
   JsonSchema(
     node: NullableNode(inner: inner.node),
@@ -71,11 +171,46 @@ pub fn nullable(inner: JsonSchema(t)) -> JsonSchema(Option(t)) {
 
 // --- Enum / Const ---
 
+/// A schema that restricts values to a fixed set of strings.
+///
+/// Produces `{"type": "string", "enum": [...]}` and decodes only strings
+/// that appear in the given list. Decoding rejects any value not in the list.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let schema = json_schema.enum(["red", "green", "blue"])
+/// json_schema.to_string(schema)
+/// // -> "{\"type\":\"string\",\"enum\":[\"red\",\"green\",\"blue\"]}"
+///
+/// json_schema.decode(schema, from: "\"red\"")
+/// // -> Ok("red")
+///
+/// json_schema.decode(schema, from: "\"yellow\"")
+/// // -> Error(...)
+/// ```
 pub fn enum(values: List(String)) -> JsonSchema(String) {
   let decoder = enum_decoder(values, fn(s) { s })
   JsonSchema(node: EnumNode(values:), decoder:)
 }
 
+/// Like `enum`, but maps each string value to an arbitrary Gleam type.
+///
+/// Takes a list of `#(json_string, gleam_value)` pairs. The schema output
+/// uses the JSON strings, while the decoder maps each to its paired value.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let schema = json_schema.enum_map([
+///   #("red", Red), #("green", Green), #("blue", Blue),
+/// ])
+/// json_schema.to_string(schema)
+/// // -> "{\"type\":\"string\",\"enum\":[\"red\",\"green\",\"blue\"]}"
+///
+/// json_schema.decode(schema, from: "\"red\"")
+/// // -> Ok(Red)
+/// ```
 pub fn enum_map(variants: List(#(String, t))) -> JsonSchema(t) {
   let decoder =
     enum_decoder(list.map(variants, fn(v) { v.0 }), fn(s) {
@@ -88,11 +223,41 @@ pub fn enum_map(variants: List(#(String, t))) -> JsonSchema(t) {
   )
 }
 
+/// A schema that accepts only a single specific string value.
+///
+/// Produces `{"type": "string", "const": "<value>"}` and decodes only
+/// that exact string.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let schema = json_schema.constant("active")
+/// json_schema.to_string(schema)
+/// // -> "{\"type\":\"string\",\"const\":\"active\"}"
+///
+/// json_schema.decode(schema, from: "\"active\"")
+/// // -> Ok("active")
+///
+/// json_schema.decode(schema, from: "\"inactive\"")
+/// // -> Error(...)
+/// ```
 pub fn constant(value: String) -> JsonSchema(String) {
   let decoder = enum_decoder([value], fn(s) { s })
   JsonSchema(node: ConstNode(value:), decoder:)
 }
 
+/// Like `constant`, but maps the matched string to an arbitrary Gleam value.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let schema = json_schema.constant_map("yes", mapped: True)
+/// json_schema.to_string(schema)
+/// // -> "{\"type\":\"string\",\"const\":\"yes\"}"
+///
+/// json_schema.decode(schema, from: "\"yes\"")
+/// // -> Ok(True)
+/// ```
 pub fn constant_map(value: String, mapped mapped: t) -> JsonSchema(t) {
   let decoder = enum_decoder([value], fn(_) { mapped })
   JsonSchema(node: ConstNode(value:), decoder:)
@@ -118,6 +283,20 @@ fn enum_decoder(
 
 // --- Annotation ---
 
+/// Attach a `"description"` annotation to any schema.
+///
+/// The description appears in the JSON Schema output but does not affect
+/// decoding. Can be composed with other annotations and combinators.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let schema =
+///   json_schema.string()
+///   |> json_schema.describe("A person's full name")
+/// json_schema.to_string(schema)
+/// // -> "{\"type\":\"string\",\"description\":\"A person's full name\"}"
+/// ```
 pub fn describe(
   schema: JsonSchema(t),
   description description: String,
@@ -130,10 +309,43 @@ pub fn describe(
 
 // --- Object building ---
 
+/// Finish building an object schema by providing the final value.
+///
+/// This is used as the last step in a chain of `field`, `optional`, or
+/// `field_with_default` calls via `use` syntax. It produces an empty object
+/// node that gets merged with the fields collected from the chain.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let schema = {
+///   use name <- json_schema.field("name", json_schema.string())
+///   use age <- json_schema.field("age", json_schema.integer())
+///   json_schema.success(User(name:, age:))
+/// }
+/// ```
 pub fn success(value: t) -> JsonSchema(t) {
   JsonSchema(node: ObjectNode(fields: []), decoder: decode.success(value))
 }
 
+/// Declare a required object field.
+///
+/// The field appears in the schema's `"properties"` and `"required"` array.
+/// Decoding fails if the field is missing from the JSON input.
+///
+/// Used with Gleam's `use` syntax to chain multiple fields together.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let schema = {
+///   use name <- json_schema.field("name", json_schema.string())
+///   use age <- json_schema.field("age", json_schema.integer())
+///   json_schema.success(User(name:, age:))
+/// }
+/// json_schema.decode(schema, from: "{\"name\":\"Alice\",\"age\":30}")
+/// // -> Ok(User(name: "Alice", age: 30))
+/// ```
 pub fn field(
   named name: String,
   of schema: JsonSchema(a),
@@ -158,6 +370,23 @@ pub fn field(
   JsonSchema(node:, decoder:)
 }
 
+/// Declare an optional object field.
+///
+/// The field appears in the schema's `"properties"` but not in `"required"`.
+/// The continuation receives `Option(a)`: `Some(value)` when the field is
+/// present, `None` when absent.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let schema = {
+///   use name <- json_schema.field("name", json_schema.string())
+///   use email <- json_schema.optional("email", json_schema.string())
+///   json_schema.success(User(name:, email:))
+/// }
+/// json_schema.decode(schema, from: "{\"name\":\"Alice\"}")
+/// // -> Ok(User(name: "Alice", email: None))
+/// ```
 pub fn optional(
   named name: String,
   of schema: JsonSchema(a),
@@ -186,6 +415,21 @@ pub fn optional(
   JsonSchema(node:, decoder:)
 }
 
+/// Declare an optional object field that may also be `null`.
+///
+/// Like `optional`, but the schema type is wrapped with `nullable` and the
+/// decoder treats both an absent field and a `null` value as `None`.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let schema = {
+///   use name <- json_schema.field("name", json_schema.string())
+///   use nick <- json_schema.optional_or_null("nickname", json_schema.string())
+///   json_schema.success(User(name:, nickname: nick))
+/// }
+/// // Field absent -> None, field null -> None, field present -> Some(value)
+/// ```
 pub fn optional_or_null(
   named name: String,
   of schema: JsonSchema(a),
@@ -218,18 +462,108 @@ pub fn optional_or_null(
   JsonSchema(node:, decoder:)
 }
 
+/// Declare an optional object field with a default value.
+///
+/// The field appears in the schema's `"properties"` with a `"default"`
+/// annotation, but not in `"required"`. When the field is absent from the
+/// JSON input, the decoder uses the provided default value. Unlike `optional`,
+/// the continuation receives the unwrapped type `a` directly, not `Option(a)`.
+///
+/// The `encode` parameter converts the default value to `json.Json` for the
+/// schema output. For primitives, use `json.int`, `json.string`, `json.float`,
+/// or `json.bool`.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let schema = {
+///   use host <- json_schema.field("host", json_schema.string())
+///   use port <- json_schema.field_with_default(
+///     "port", json_schema.integer(),
+///     default: 8080, encode: json.int,
+///   )
+///   json_schema.success(Config(host:, port:))
+/// }
+/// json_schema.to_string(schema)
+/// // -> "{...\"port\":{\"type\":\"integer\",\"default\":8080}...}"
+///
+/// json_schema.decode(schema, from: "{\"host\":\"localhost\"}")
+/// // -> Ok(Config(host: "localhost", port: 8080))
+///
+/// json_schema.decode(schema, from: "{\"host\":\"localhost\",\"port\":3000}")
+/// // -> Ok(Config(host: "localhost", port: 3000))
+/// ```
+pub fn field_with_default(
+  named name: String,
+  of schema: JsonSchema(a),
+  default default_value: a,
+  encode encode: fn(a) -> json.Json,
+  next next: fn(a) -> JsonSchema(b),
+) -> JsonSchema(b) {
+  // Probe continuation for schema structure
+  let rest = next(coerce_nil())
+  let rest_fields = get_object_fields(rest.node)
+  let node =
+    ObjectNode(fields: [
+      ObjectField(
+        name:,
+        schema: DefaultNode(inner: schema.node, default: encode(default_value)),
+        required: False,
+      ),
+      ..rest_fields
+    ])
+
+  // Build real decoder: absent field -> default_value
+  let decoder = {
+    use value <- decode.optional_field(name, default_value, schema.decoder)
+    let result = next(value)
+    result.decoder
+  }
+
+  JsonSchema(node:, decoder:)
+}
+
 // --- Operations ---
 
+/// Convert a schema to a `json.Json` value.
+///
+/// Returns the JSON Schema representation as a `json.Json` value that can
+/// be further processed or serialized.
 pub fn to_json(schema: JsonSchema(t)) -> json.Json {
   node_to_json(schema.node)
 }
 
+/// Convert a schema to a JSON string.
+///
+/// Returns the JSON Schema as a serialized JSON string.
+///
+/// ## Examples
+///
+/// ```gleam
+/// json_schema.string() |> json_schema.to_string
+/// // -> "{\"type\":\"string\"}"
+/// ```
 pub fn to_string(schema: JsonSchema(t)) -> String {
   schema
   |> to_json
   |> json.to_string
 }
 
+/// Decode a JSON string using the schema's decoder.
+///
+/// Parses the given JSON string and decodes it according to the schema.
+/// Returns `Ok(value)` on success or `Error(DecodeError)` on failure.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let schema = json_schema.integer()
+/// json_schema.decode(schema, from: "42")
+/// // -> Ok(42)
+///
+/// json_schema.decode(schema, from: "\"not a number\"")
+/// // -> Error(...)
+/// ```
 pub fn decode(
   schema: JsonSchema(t),
   from json_string: String,
@@ -246,9 +580,6 @@ fn get_object_fields(node: SchemaNode) -> List(ObjectField) {
   }
 }
 
-/// Convert a schema node to a list of JSON key-value pairs.
-/// This allows DescriptionNode and NullableNode to compose by
-/// appending/modifying pairs rather than re-parsing JSON.
 fn node_to_pairs(node: SchemaNode) -> List(#(String, json.Json)) {
   case node {
     StringNode -> [#("type", json.string("string"))]
@@ -267,7 +598,6 @@ fn node_to_pairs(node: SchemaNode) -> List(#(String, json.Json)) {
     NullableNode(inner:) ->
       case get_type_name(inner) {
         Ok(type_name) -> {
-          // Simple inner type: replace "type" with array ["<type>", "null"]
           let null_type =
             json.preprocessed_array([
               json.string(type_name),
@@ -323,6 +653,9 @@ fn node_to_pairs(node: SchemaNode) -> List(#(String, json.Json)) {
       list.append(node_to_pairs(inner), [
         #("description", json.string(description)),
       ])
+
+    DefaultNode(inner:, default:) ->
+      list.append(node_to_pairs(inner), [#("default", default)])
   }
 }
 
@@ -343,6 +676,7 @@ fn get_type_name(node: SchemaNode) -> Result(String, Nil) {
     EnumNode(..) -> Ok("string")
     ConstNode(..) -> Ok("string")
     DescriptionNode(inner:, ..) -> get_type_name(inner)
+    DefaultNode(inner:, ..) -> get_type_name(inner)
     NullableNode(..) -> Error(Nil)
   }
 }
